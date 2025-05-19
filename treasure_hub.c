@@ -6,8 +6,10 @@
 #include <sys/wait.h>
 #include <fcntl.h>
 
+#define SIGCALC (SIGRTMAX+1)
+
 pid_t monitor_pid = -1;
-extern pid_t monitor_pid;
+int score_pipe_fd[2];
 
 void handle_sigchld(int sig) {
     int status;
@@ -55,25 +57,30 @@ void handle_list_treasures(char *input) {
     char *token = strtok(input, " ");
     token = strtok(NULL, " ");
     if (!token) {
-        printf("[Hub] Usage: list_treasures <hunt_id>\n");
+        printf("[Hub] Usage: there wasnt any input, it should contain a hunt name\n");
         return;
     }
+
     int fd = open("cmd_hunt.txt", O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd == -1) {
         perror("[Hub] Failed to open cmd_hunt.txt");
         return;
     }
+
     size_t len = strlen(token);
     char buf[len + 2];
     strcpy(buf, token);
     strcat(buf, "\n");
+
     if (write(fd, buf, strlen(buf)) == -1) {
-        perror("[Hub] Failed to write hunt id to cmd_hunt.txt");
+        perror("[Hub] Failed to write HuntId to cmd_hunt.txt");
         close(fd);
         return;
     }
     close(fd);
+
     printf("[Hub] Requesting list_treasures for hunt '%s'...\n", token);
+
     if (kill(monitor_pid, SIGUSR2) == -1) {
         perror("[Hub] Failed to send SIGUSR2 to monitor");
     }
@@ -84,15 +91,16 @@ void handle_view_treasure(char *input) {
     char *hunt_id = strtok(NULL, " ");
     char *treasure_id = strtok(NULL, " ");
     if (!hunt_id || !treasure_id) {
-        printf("[Hub] Usage: view_treasure <hunt_id> <treasure_id>\n");
+        printf("[Hub] Usage: view_treasure <HuntId> <treasure_id>\n");
         return;
     }
-    
+
     int fd = open("cmd_view.txt", O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd == -1) {
         perror("[Hub] Failed to open cmd_view.txt");
         return;
     }
+
     char buffer[512];
     snprintf(buffer, sizeof(buffer), "%s\n%s\n", hunt_id, treasure_id);
     if (write(fd, buffer, strlen(buffer)) == -1) {
@@ -101,7 +109,9 @@ void handle_view_treasure(char *input) {
         return;
     }
     close(fd);
+
     printf("[Hub] Requesting view_treasure for hunt '%s' and treasure '%s'...\n", hunt_id, treasure_id);
+
     if (kill(monitor_pid, SIGRTMIN) == -1) {
         perror("[Hub] Failed to send SIGRTMIN to monitor");
     }
@@ -112,13 +122,13 @@ void stop_monitor() {
         printf("[Hub] No monitor is running.\n");
         return;
     }
-    
+
     printf("[Hub] Sending termination request to monitor (PID: %d)...\n", monitor_pid);
     if (kill(monitor_pid, SIGTERM) == -1) {
         perror("[Hub] Failed to send SIGTERM to monitor");
         return;
     }
-    
+
     while (monitor_pid != -1) {
         sleep(1);
     }
@@ -132,6 +142,35 @@ void exit_hub() {
     }
     printf("[Hub] Exiting Treasure Hub.\n");
     exit(EXIT_SUCCESS);
+}
+
+void handle_calculate_score() {
+    char hunt_id[100];
+    printf("Enter hunt id for score calculation: ");
+    if (fgets(hunt_id, sizeof(hunt_id), stdin) == NULL) {
+        printf("Error reading hunt id.\n");
+        return;
+    }
+    hunt_id[strcspn(hunt_id, "\n")] = '\0';
+
+    int fd = open("cmd_score.txt", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd == -1) {
+        perror("[Hub] Failed to open cmd_score.txt");
+        return;
+    }
+
+    if (write(fd, hunt_id, strlen(hunt_id)) == -1) {
+        perror("[Hub] Failed to write HuntId to cmd_score.txt");
+        close(fd);
+        return;
+    }
+    close(fd);
+
+    printf("[Hub] Requesting score calculation for hunt '%s'...\n", hunt_id);
+
+    if (kill(monitor_pid, SIGCALC) == -1) {
+        perror("[Hub] Failed to send SIGCALC to monitor");
+    }
 }
 
 int main() {
@@ -148,7 +187,7 @@ int main() {
             break;
         command[strcspn(command, "\n")] = '\0';
 
-       if (strcmp(command, "start_monitor") == 0) {
+        if (strcmp(command, "start_monitor") == 0) {
             start_monitor();
         } else if (strcmp(command, "list_hunts") == 0) {
             list_hunts();
@@ -158,6 +197,8 @@ int main() {
             handle_view_treasure(command);
         } else if (strcmp(command, "stop_monitor") == 0) {
             stop_monitor();
+        } else if (strcmp(command, "calculate_score") == 0) {
+            handle_calculate_score();
         } else if (strcmp(command, "exit") == 0) {
             exit_hub();
         } else {
